@@ -195,67 +195,81 @@ async def fetch_text(page, url: str) -> str:
 
 
 async def main() -> None:
-    print("🚀 三天監票 Bot 啟動")
+    print("🚀 三天監票 Bot 啟動", flush=True)
 
     last_sent_state = ""
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page(locale="en-US")
+    try:
+        print("1. 準備啟動 Playwright", flush=True)
 
-        while True:
-            try:
-                results_by_day: dict[str, list[str]] = {}
-                target_map: dict[str, dict] = {}
+        async with async_playwright() as p:
+            print("2. 準備啟動 Chromium", flush=True)
 
-                for target in TARGETS:
-                    day_name = target["name"]
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage"]
+            )
 
-                    print(f"[{now()}] 檢查 {day_name}")
+            print("3. Chromium 啟動成功", flush=True)
 
-                    text = await fetch_text(page, target["url"])
+            page = await browser.new_page(locale="en-US")
+            print("4. new_page 成功", flush=True)
 
-                    if has_ticket(text):
-                        sections = extract_sections(text)
+            while True:
+                try:
+                    print("5. 進入 while True，開始檢查", flush=True)
 
-                        if sections:
-                            results_by_day[day_name] = sections
-                            target_map[day_name] = target
+                    results_by_day: dict[str, list[str]] = {}
+                    target_map: dict[str, dict] = {}
 
-                            print(f"🎯 {day_name} 有票：")
-                            for s in sections:
-                                print("  ", convert_line_to_chinese_style(s))
+                    for target in TARGETS:
+                        day_name = target["name"]
+                        print(f"[{now()}] 檢查 {day_name}", flush=True)
+
+                        text = await fetch_text(page, target["url"])
+
+                        if has_ticket(text):
+                            sections = extract_sections(text)
+
+                            if sections:
+                                results_by_day[day_name] = sections
+                                target_map[day_name] = target
+                                print(f"🎯 {day_name} 有票", flush=True)
+                            else:
+                                print(f"⚠️ {day_name} 有 remaining，但沒解析到明細", flush=True)
                         else:
-                            print(f"⚠️ {day_name} 有 remaining，但沒解析到明細")
+                            print(f"❌ {day_name} 尚無票", flush=True)
+
+                    current_state = build_state_key(results_by_day) if results_by_day else ""
+
+                    if results_by_day and current_state != last_sent_state:
+                        print("✅ 票況有變化，準備發送 Discord", flush=True)
+
+                        for day_name, sections in results_by_day.items():
+                            target = target_map[day_name]
+                            description = build_embed_description(target, sections)
+
+                            await send_discord_embed(
+                                title=f"🎟️ {day_name} 放票通知",
+                                description=description,
+                                url=target["url"]
+                            )
+
+                        last_sent_state = current_state
+                        print("✅ Discord 已送出通知", flush=True)
+                    elif results_by_day:
+                        print("⚪ 有票，但票況和上次相同，不重複通知", flush=True)
                     else:
-                        print(f"❌ {day_name} 尚無票")
+                        print("🕳️ 三天目前都沒有票", flush=True)
 
-                current_state = build_state_key(results_by_day) if results_by_day else ""
+                except Exception as e:
+                    print(f"❌ while 內錯誤: {e}", flush=True)
 
-                if results_by_day and current_state != last_sent_state:
-                    print("✅ 票況有變化，準備發送 Discord")
+                await asyncio.sleep(CHECK_INTERVAL)
 
-                    for day_name, sections in results_by_day.items():
-                        target = target_map[day_name]
-                        description = build_embed_description(target, sections)
-
-                        await send_discord_embed(
-                            title=f"🎟️ {day_name} 放票通知",
-                            description=description,
-                            url=target["url"]
-                        )
-
-                    last_sent_state = current_state
-                    print("✅ Discord 已送出通知")
-                elif results_by_day:
-                    print("⚪ 有票，但票況和上次相同，不重複通知")
-                else:
-                    print("🕳️ 三天目前都沒有票")
-
-            except Exception as e:
-                print("❌ 發生錯誤：", e)
-
-            await asyncio.sleep(CHECK_INTERVAL)
+    except Exception as e:
+        print(f"❌ 啟動階段錯誤: {e}", flush=True)
+        raise
 
 
 if __name__ == "__main__":
